@@ -2,12 +2,10 @@
 {
     public class WelcomeViewModel : NotifyPropertyChangedViewModel
     {
-        // formatting is done here instead of in xaml, it's just a bit easier
-        public string MainText => String.Format(
-            Strings.Installer_Welcome_MainText,
-            "[github.com/fishstrap/fishstrap](https://github.com/fishstrap/fishstrap)",
-            "[fishstrap.app](https://fishstrap.app)"
-        );
+        public string MainText =>
+            "Thank you for downloading Xyllostrap.\n\n" +
+            "The only official place to download Xyllostrap from is [github.com/06Xyllo/Xyllostrap](https://github.com/06Xyllo/Xyllostrap), so please verify that you got it from there.\n\n" +
+            "This installation process will be quick and simple, and you will be able to configure any of Xyllostrap's settings after installation.";
 
         public bool CanContinue { get; set; } = false;
     }
