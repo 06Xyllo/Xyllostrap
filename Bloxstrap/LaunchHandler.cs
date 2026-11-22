@@ -294,6 +294,8 @@ namespace Bloxstrap
 
             var watcher = new Watcher();
 
+            watcher.StartExitFailsafe();
+
             Task.Run(watcher.Run).ContinueWith(t =>
             {
                 App.Logger.WriteLine(LOG_IDENT, "Watcher task has finished");

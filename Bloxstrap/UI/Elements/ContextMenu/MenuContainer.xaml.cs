@@ -130,6 +130,8 @@ namespace Bloxstrap.UI.Elements.ContextMenu
             _watcher.KillRobloxProcess();
         }
 
+        private void ExitXyllostrapMenuItem_Click(object sender, RoutedEventArgs e) => _watcher.ExitApp();
+
         private void JoinLastServerMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (_activityWatcher is null)
