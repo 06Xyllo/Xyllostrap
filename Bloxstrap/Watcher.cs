@@ -84,6 +84,84 @@ namespace Bloxstrap
 
         public void KillRobloxProcess() => CloseProcess(_watcherData!.ProcessId, true);
 
+        private bool _disposed = false;
+
+        /// <summary>
+        /// Exits Xyllostrap right away (used by the tray menu "Exit Xyllostrap" option).
+        /// </summary>
+        public void ExitApp()
+        {
+            const string LOG_IDENT = "Watcher::ExitApp";
+
+            App.Logger.WriteLine(LOG_IDENT, "Exit requested from tray menu");
+
+            // if a clean exit gets stuck for any reason, force it after a few seconds
+            new Thread(() =>
+            {
+                Thread.Sleep(4000);
+                Process.GetCurrentProcess().Kill();
+            }) { IsBackground = true }.Start();
+
+            try
+            {
+                _notifyIcon?.Hide();
+                Dispose();
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException(LOG_IDENT, ex);
+            }
+
+            App.Terminate();
+        }
+
+        private bool IsRobloxRunning()
+        {
+            if (_watcherData is not null && Utilities.GetProcessesSafe().Any(x => x.Id == _watcherData.ProcessId))
+                return true;
+
+            return Process.GetProcessesByName(Path.GetFileNameWithoutExtension(App.RobloxPlayerAppName)).Length > 0;
+        }
+
+        /// <summary>
+        /// Safety net: once Roblox has fully closed, make sure Xyllostrap doesn't keep running in the background.
+        /// Runs on its own thread so nothing else can block it.
+        /// </summary>
+        public void StartExitFailsafe()
+        {
+            const string LOG_IDENT = "Watcher::ExitFailsafe";
+
+            if (!_lock.IsAcquired || _watcherData is null)
+                return;
+
+            new Thread(() =>
+            {
+                while (true)
+                {
+                    Thread.Sleep(3000);
+
+                    if (IsRobloxRunning())
+                        continue;
+
+                    // roblox is gone, give the normal shutdown time to finish first
+                    Thread.Sleep(15000);
+
+                    if (IsRobloxRunning())
+                        continue;
+
+                    App.Logger.WriteLine(LOG_IDENT, "Roblox has closed but Xyllostrap is still running, forcing exit");
+
+                    _notifyIcon?.Hide();
+                    Thread.Sleep(500);
+                    Process.GetCurrentProcess().Kill();
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "Roblox exit failsafe"
+            }.Start();
+        }
+
         public void CloseProcess(int pid, bool force = false)
         {
             const string LOG_IDENT = "Watcher::CloseProcess";
@@ -137,10 +215,23 @@ namespace Bloxstrap
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
             App.Logger.WriteLine("Watcher::Dispose", "Disposing Watcher");
 
             _notifyIcon?.Dispose();
-            RichPresence?.Dispose();
+
+            try
+            {
+                RichPresence?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("Watcher::Dispose", ex);
+            }
 
             App.State.Prop.WatcherRunning = false;
 

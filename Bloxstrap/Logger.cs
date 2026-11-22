@@ -131,10 +131,11 @@
 
             try
             {
-                await _semaphore.WaitAsync();
-                await _filestream!.WriteAsync(Encoding.UTF8.GetBytes($"{message}\r\n"));
-
-                _ = _filestream.FlushAsync();
+                // ConfigureAwait(false) so log writes never depend on the UI thread being free,
+                // and flush every line so the log on disk is always up to date
+                await _semaphore.WaitAsync().ConfigureAwait(false);
+                await _filestream!.WriteAsync(Encoding.UTF8.GetBytes($"{message}\r\n")).ConfigureAwait(false);
+                await _filestream.FlushAsync().ConfigureAwait(false);
             }
             finally
             {

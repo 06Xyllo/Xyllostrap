@@ -10,10 +10,16 @@ namespace Bloxstrap.UI
 
         private bool _disposing = false;
 
-        private readonly System.Windows.Forms.NotifyIcon _notifyIcon;
-        
+        // Xyllostrap: the tray icon lives on its own thread with its own message loop,
+        // so right-clicking it always works even if the main UI thread is busy or stuck.
+        private System.Windows.Forms.NotifyIcon _notifyIcon = null!;
+
+        private System.Windows.Forms.ContextMenuStrip _fallbackMenu = null!;
+
+        private SynchronizationContext _trayContext = null!;
+
         private readonly MenuContainer _menuContainer;
-        
+
         private readonly Watcher _watcher;
 
         private ActivityWatcher? _activityWatcher => _watcher.ActivityWatcher;
@@ -26,14 +32,37 @@ namespace Bloxstrap.UI
 
             _watcher = watcher;
 
-            _notifyIcon = new(new System.ComponentModel.Container())
+            using var ready = new ManualResetEventSlim();
+
+            var trayThread = new Thread(() =>
             {
-                Icon = Properties.Resources.IconBloxstrap,
-                Text = "Xyllostrap",
-                Visible = true
+                _trayContext = new System.Windows.Forms.WindowsFormsSynchronizationContext();
+                SynchronizationContext.SetSynchronizationContext(_trayContext);
+
+                _fallbackMenu = new System.Windows.Forms.ContextMenuStrip();
+                _fallbackMenu.Items.Add("Exit Xyllostrap", null, (_, _) => _watcher.ExitApp());
+
+                _notifyIcon = new(new System.ComponentModel.Container())
+                {
+                    Icon = Properties.Resources.IconBloxstrap,
+                    Text = "Xyllostrap",
+                    Visible = true
+                };
+
+                _notifyIcon.MouseClick += MouseClickEventHandler;
+
+                ready.Set();
+
+                System.Windows.Forms.Application.Run();
+            })
+            {
+                IsBackground = true,
+                Name = "Xyllostrap tray icon"
             };
 
-            _notifyIcon.MouseClick += MouseClickEventHandler;
+            trayThread.SetApartmentState(ApartmentState.STA);
+            trayThread.Start();
+            ready.Wait();
 
             if (_activityWatcher is not null && App.Settings.Prop.ShowServerDetails)
                 _activityWatcher.ShowNotif += ShowNotif;
@@ -48,8 +77,38 @@ namespace Bloxstrap.UI
             if (e.Button != System.Windows.Forms.MouseButtons.Right)
                 return;
 
-            _menuContainer.Activate();
-            _menuContainer.ContextMenu.IsOpen = true;
+            var op = _menuContainer.Dispatcher.BeginInvoke(() =>
+            {
+                _menuContainer.Activate();
+                _menuContainer.ContextMenu.IsOpen = true;
+            });
+
+            // if the main UI doesn't respond within a second, show a simple menu so the user can always exit
+            var cursor = System.Windows.Forms.Cursor.Position;
+
+            Task.Delay(1000).ContinueWith(_ =>
+            {
+                if (op.Status != System.Windows.Threading.DispatcherOperationStatus.Pending)
+                    return;
+
+                App.Logger.WriteLine("NotifyIconWrapper::MouseClickEventHandler", "Main UI is not responding, showing fallback tray menu");
+                _trayContext.Post(_ => _fallbackMenu.Show(cursor), null);
+            });
+        }
+
+        /// <summary>
+        /// Hides the tray icon without waiting on anything (safe to call from any thread).
+        /// </summary>
+        public void Hide()
+        {
+            try
+            {
+                _trayContext.Send(_ => _notifyIcon.Visible = false, null);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("NotifyIconWrapper::Hide", ex);
+            }
         }
         #endregion
 
@@ -106,25 +165,35 @@ namespace Bloxstrap.UI
             App.Logger.WriteLine(LOG_IDENT, $"Showing alert for {duration} seconds (clickHandler={clickHandler is not null})");
             App.Logger.WriteLine(LOG_IDENT, $"{caption}: {message.Replace("\n", "\\n")}");
 
-            _notifyIcon.BalloonTipTitle = caption;
-            _notifyIcon.BalloonTipText = message;
+            // balloon clicks arrive on the tray thread, but the handlers open WPF windows, so hop to the UI thread
+            EventHandler? uiClickHandler = clickHandler is null
+                ? null
+                : (s, e) => _menuContainer.Dispatcher.BeginInvoke(() => clickHandler(s, e));
 
-            if (_alertClickHandler is not null)
+            _trayContext.Post(_ =>
             {
-                App.Logger.WriteLine(LOG_IDENT, "Previous alert still present, erasing click handler");
-                _notifyIcon.BalloonTipClicked -= _alertClickHandler;
-            }
+                _notifyIcon.BalloonTipTitle = caption;
+                _notifyIcon.BalloonTipText = message;
 
-            _alertClickHandler = clickHandler;
-            _notifyIcon.BalloonTipClicked += clickHandler;
+                if (_alertClickHandler is not null)
+                {
+                    App.Logger.WriteLine(LOG_IDENT, "Previous alert still present, erasing click handler");
+                    _notifyIcon.BalloonTipClicked -= _alertClickHandler;
+                }
 
-            _notifyIcon.ShowBalloonTip(duration);
+                _alertClickHandler = uiClickHandler;
+                _notifyIcon.BalloonTipClicked += uiClickHandler;
+
+                _notifyIcon.ShowBalloonTip(duration);
+            }, null);
+
+            clickHandler = uiClickHandler;
 
             Task.Run(async () =>
             {
                 await Task.Delay(duration * 1000);
-             
-                _notifyIcon.BalloonTipClicked -= clickHandler;
+
+                _trayContext.Post(_ => _notifyIcon.BalloonTipClicked -= clickHandler, null);
 
                 App.Logger.WriteLine(LOG_IDENT, "Duration over, erasing current click handler");
 
@@ -144,8 +213,23 @@ namespace Bloxstrap.UI
 
             App.Logger.WriteLine("NotifyIconWrapper::Dispose", "Disposing NotifyIcon");
 
-            _menuContainer.Dispatcher.Invoke(_menuContainer.Close);
-            _notifyIcon.Dispose();
+            // don't block on the UI thread here, it may be the thing that's stuck
+            _menuContainer.Dispatcher.BeginInvoke(_menuContainer.Close);
+
+            try
+            {
+                _trayContext.Send(_ =>
+                {
+                    _notifyIcon.Visible = false;
+                    _notifyIcon.Dispose();
+                    _fallbackMenu.Dispose();
+                    System.Windows.Forms.Application.ExitThread();
+                }, null);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("NotifyIconWrapper::Dispose", ex);
+            }
 
             GC.SuppressFinalize(this);
         }
