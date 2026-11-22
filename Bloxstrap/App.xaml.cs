@@ -18,12 +18,12 @@ namespace Bloxstrap
 #else
         public const string ProjectName = "Xyllostrap";
 #endif
-        public const string ProjectOwner = "fishstrap";
+        public const string ProjectOwner = "06Xyllo";
         // Xyllostrap is a fork of Fishstrap; help/wiki links point at upstream
-        public const string ProjectRepository = "fishstrap/fishstrap";
-        public const string ProjectDownloadLink = "https://github.com/fishstrap/fishstrap/releases";
+        public const string ProjectRepository = "06Xyllo/Xyllostrap";
+        public const string ProjectDownloadLink = "https://github.com/06Xyllo/Xyllostrap/releases";
         public const string ProjectHelpLink = "https://github.com/bloxstraplabs/bloxstrap/wiki";
-        public const string ProjectSupportLink = "https://github.com/fishstrap/fishstrap/issues/new";
+        public const string ProjectSupportLink = "https://github.com/06Xyllo/Xyllostrap/issues/new";
         public const string ProjectRemoteDataLink = "https://config.fishstrap.app/v1/Data.json";
 
         public const string RobloxPlayerAppName = "RobloxPlayerBeta.exe";
